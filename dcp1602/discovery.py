@@ -95,7 +95,7 @@ class ScannerFinder:
 
         self.ep.write(b'D=FB\n')
         print(binascii.hexlify(self.ep.read(1024)))
-        
+
 def find_scanner():
     f = ScannerFinder()
     return f.query()
