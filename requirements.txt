@@ -1,0 +1,4 @@
+#easysnmp
+Pillow
+pyusb
+zeroconf
