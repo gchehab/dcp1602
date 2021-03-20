@@ -2,14 +2,20 @@
 #import zeroconf
 import logging
 import time
-
+import os
 import usb.core
 import usb.util
 
 from pprint import pprint
 import binascii
 
+
 logger = logging.getLogger(__name__)
+
+def wrap_request(t, fields):
+    if isinstance(fields, list):
+        fields = ''.join(['%s=%s\n' % k for k in fields])
+    return b'\x1b%s\n%s\x80' % (t, fields.encode())
 
 
 class ScannerFinder:
@@ -26,6 +32,7 @@ class ScannerFinder:
 
 
     def __init__(self):
+        os.environ['PYSUB_DEBUG']='debug'
         pass
         #logger.info("Querying MDNS for %s", self.svc_type)
         logger.info("Querying USB for %d devices", len(self.__usb_devices))
@@ -64,13 +71,18 @@ class ScannerFinder:
                 raise ValueError('No scanner found')
             else:
                 break
+        try:
+            self.dev.reset()
+        except:
+            pass
 
         # set the active congfiguration. With no arguments, the first
         # configuration will be the active one
         try:
-            if self.dev.is_kernel_driver_active(0):
-                reattach = True
-                self.dev.detach_kernel_driver(0)
+            for cfg in self.dev:
+                for intf in cfg:
+                    if self.dev.is_kernel_driver_active(intf.bInterfaceNumber):
+                        self.dev.detach_kernel_driver(intf.bInterfaceNumber)
         except Exception:
             pass
 
@@ -78,24 +90,60 @@ class ScannerFinder:
 
         # get an endpoint instance
         self.cfg = self.dev.get_active_configuration()
-        self.intf = self.cfg[(0,0)]
 
-        self.ep = usb.util.find_descriptor (
+        usb.util.claim_interface(self.dev, intf)
+        self.intf = intf
+
+        self.ep_out = usb.util.find_descriptor (
             self.intf,
             # match the first OUT endpoint
             custom_match = \
                     lambda e: \
                         usb.util.endpoint_direction(e.bEndpointAddress) == \
+                        usb.util.ENDPOINT_OUT)
+
+        assert self.ep_out is not None
+
+        self.ep_in = usb.util.find_descriptor (
+            self.intf,
+            # match the first IN endpoint
+            custom_match = \
+                    lambda e: \
+                        usb.util.endpoint_direction(e.bEndpointAddress) == \
                         usb.util.ENDPOINT_IN)
 
-        assert self.ep is not None
+        assert self.ep_in is not None
 
-        self.ep.write(b'D=ADF\n')
-        print(binascii.hexlify(self.ep.read(1024)))
+        params = [
+            ('R', '%d,%d' % (300, 300)),
+            ('M', 'CGRAY'),
+            ('D', 'SIN'),
+            ('S', 'NORMAL_SCAN'),
+        ]
+        self.ep_out.write(wrap_request(b'I', params))
+        tmp=self.ep_out.read(self.ep_in.bEndpointAddress, self.ep_in.wMaxPacketSize)
+        print(binascii.hexlify(tmp))
+        #assert tmp == b'\x80'
+        
+        params = [
+            ('R', '%d,%d' % (300, 300)),
+            ('M', 'CGRAY'),
+            ('B', 50),
+            ('N', 50),
+            ('C', 'NONE'),  # compression, 'J=MID'
+            ('A', '%d,%d,%d,%d' % (0,0,2416,3437)),
+            ('S', 'NORMAL_SCAN'),
+            ('P', 0),
+            ('E', 0),
+            ('G', 0),
+        ]
+        self.ep_out.write(wrap_request(b'X', params))
+        tmp=self.ep_out.read(self.ep_in.bEndpointAddress, self.ep_in.wMaxPacketSize)
+        print(binascii.hexlify(tmp))
+        #assert tmp == b'\x80'
 
-        self.ep.write(b'D=FB\n')
-        print(binascii.hexlify(self.ep.read(1024)))
-
+        usb.util.dispose_resources(self.dev)
+        
 def find_scanner():
     f = ScannerFinder()
     return f.query()
