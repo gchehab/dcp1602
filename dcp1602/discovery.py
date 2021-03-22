@@ -6,6 +6,7 @@ import os
 import usb.core
 import usb.util
 
+from time import sleep
 from pprint import pprint
 import binascii
 
@@ -71,10 +72,10 @@ class ScannerFinder:
                 raise ValueError('No scanner found')
             else:
                 break
-        try:
-            self.dev.reset()
-        except:
-            pass
+        # try:
+        #     self.dev.reset()
+        # except:
+        #     pass
 
         # set the active congfiguration. With no arguments, the first
         # configuration will be the active one
@@ -114,14 +115,32 @@ class ScannerFinder:
 
         assert self.ep_in is not None
 
+        # self.dev.reset()
+        # sleep(3)
+
+         #tmp=self.dev.ctrl_transfer(0x40, 1, 2, 0)
+        # sleep(1)
+        tmp=self.dev.ctrl_transfer(0xc0, 1, 2, 0, 5)
+        
+        self.ep_out.write(binascii.unhexlify('1b510a80'))
+        sleep(2)
+        tmp=self.ep_in.read(self.ep_in.wMaxPacketSize)
+            
+
+        tmp=self.ep_out.write(wrap_request(b'D', 'ADF\n'))
+        sleep(2)
+        tmp=self.ep_in.read(self.ep_in.wMaxPacketSize)
+        print(binascii.hexlify(tmp))
+
         params = [
             ('R', '%d,%d' % (300, 300)),
             ('M', 'CGRAY'),
             ('D', 'SIN'),
             ('S', 'NORMAL_SCAN'),
         ]
-        self.ep_out.write(wrap_request(b'I', params))
-        tmp=self.ep_out.read(self.ep_in.bEndpointAddress, self.ep_in.wMaxPacketSize)
+        tmp=self.ep_out.write(wrap_request(b'I', params))
+        sleep(2)
+        tmp=self.ep_in.read(self.ep_in.wMaxPacketSize)
         print(binascii.hexlify(tmp))
         #assert tmp == b'\x80'
         
@@ -138,7 +157,8 @@ class ScannerFinder:
             ('G', 0),
         ]
         self.ep_out.write(wrap_request(b'X', params))
-        tmp=self.ep_out.read(self.ep_in.bEndpointAddress, self.ep_in.wMaxPacketSize)
+        sleep(2)
+        tmp=self.ep_in.read(self.ep_in.wMaxPacketSize)
         print(binascii.hexlify(tmp))
         #assert tmp == b'\x80'
 
