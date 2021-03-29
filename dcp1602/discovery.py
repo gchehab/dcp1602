@@ -33,28 +33,28 @@ class ScannerFinder:
 
 
     def __init__(self):
-        os.environ['PYSUB_DEBUG']='debug'
+        os.environ['PYUSB_DEBUG']='debug'
         pass
         #logger.info("Querying MDNS for %s", self.svc_type)
         logger.info("Querying USB for %d devices", len(self.__usb_devices))
         #self._address = None
 
-    def add_service(self, zc, type_, name):
-        if self._address:
-            logger.warning("Got second response, scanner selection is not implemented, so ignoring it.")
-        logger.error("Got service: %s %s", type_, name)
-        data = zc.get_service_info(type_, name)
-        addr = '.'.join([str(i) for i in data.address])
-        mfg = data.properties.get(b'mfg', '[NO_DATA]')
-        model = data.properties.get(b'mdl', '[NO_DATA]')
-        button = data.properties.get(b'button', None) == b'T'
-        flatbed = data.properties.get(b'flatbed', None) == b'T'
-        feeder = data.properties.get(b'feeder', None) == b'T'
-        logger.warning("Scanner found: addr=%s:%d, mfg=%s, model=%s, buttons=%s, feeder=%s, flatbed=%s",
-                       addr, data.port, mfg, model, button, feeder, flatbed)
-        self._address = addr
-        self._model = model
-        self._port = data.port
+    # def add_service(self, zc, type_, name):
+    #     if self._address:
+    #         logger.warning("Got second response, scanner selection is not implemented, so ignoring it.")
+    #     logger.error("Got service: %s %s", type_, name)
+    #     data = zc.get_service_info(type_, name)
+    #     addr = '.'.join([str(i) for i in data.address])
+    #     mfg = data.properties.get(b'mfg', '[NO_DATA]')
+    #     model = data.properties.get(b'mdl', '[NO_DATA]')
+    #     button = data.properties.get(b'button', None) == b'T'
+    #     flatbed = data.properties.get(b'flatbed', None) == b'T'
+    #     feeder = data.properties.get(b'feeder', None) == b'T'
+    #     logger.warning("Scanner found: addr=%s:%d, mfg=%s, model=%s, buttons=%s, feeder=%s, flatbed=%s",
+    #                    addr, data.port, mfg, model, button, feeder, flatbed)
+    #     self._address = addr
+    #     self._model = model
+    #     self._port = data.port
 
     def query(self):
         #self.zc = zeroconf.Zeroconf()
@@ -149,17 +149,28 @@ class ScannerFinder:
             ('M', 'CGRAY'),
             ('B', 50),
             ('N', 50),
+            # ('C', 'JPEG'),  # compression, 'J=MID'
             ('C', 'NONE'),  # compression, 'J=MID'
             ('A', '%d,%d,%d,%d' % (0,0,2416,3437)),
             ('S', 'NORMAL_SCAN'),
+            ('D', 'SIN'),
             ('P', 0),
             ('E', 0),
             ('G', 0),
         ]
         self.ep_out.write(wrap_request(b'X', params))
         sleep(2)
-        tmp=self.ep_in.read(self.ep_in.wMaxPacketSize)
+        finish = False
+        while not finish:
+            tmp=self.ep_in.read(16384)
+            # if len(tmp) == 1 and tmp[0] == 0x80:
+            #     finish = True
+            sleep (.01)
         print(binascii.hexlify(tmp))
+
+        # End use
+        tmp=self.dev.ctrl_transfer(0xc0, 2, 2, 0, 5)
+
         #assert tmp == b'\x80'
 
         usb.util.dispose_resources(self.dev)
