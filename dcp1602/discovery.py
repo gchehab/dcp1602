@@ -2,14 +2,15 @@
 #import zeroconf
 import logging
 import time
-import os
+import os, sys
+import struct
 import usb.core
 import usb.util
+from usb.core import USBError
 
 from time import sleep
 from pprint import pprint
 import binascii
-
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +34,13 @@ class ScannerFinder:
 
 
     def __init__(self):
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="[%(asctime)s] %(levelname)s [%(name)s.%(funcName)s:%(lineno)d] %(message)s",
+            datefmt="%H:%M:%S",
+            stream=sys.stdout)
         os.environ['PYUSB_DEBUG']='debug'
-        pass
+
         #logger.info("Querying MDNS for %s", self.svc_type)
         logger.info("Querying USB for %d devices", len(self.__usb_devices))
         #self._address = None
@@ -82,13 +88,18 @@ class ScannerFinder:
         try:
             for cfg in self.dev:
                 for intf in cfg:
-                    if self.dev.is_kernel_driver_active(intf.bInterfaceNumber):
+                    if self.dev.is_kernel_driver_active(intf.bInterfaceNumber) and intf.bInterfaceClass != 7:
                         self.dev.detach_kernel_driver(intf.bInterfaceNumber)
         except Exception:
             pass
 
-        self.dev.set_configuration()
+        try:
+            self.dev.set_configuration()
 
+        except USBError:
+            self.dev.reset()
+            self.dev.set_configuration()
+            
         # get an endpoint instance
         self.cfg = self.dev.get_active_configuration()
 
@@ -115,22 +126,21 @@ class ScannerFinder:
 
         assert self.ep_in is not None
 
-        # self.dev.reset()
-        # sleep(3)
-
-         #tmp=self.dev.ctrl_transfer(0x40, 1, 2, 0)
+        #tmp=self.dev.ctrl_transfer(0x40, 1, 2, 0)
         # sleep(1)
+
+        # Handshake
         tmp=self.dev.ctrl_transfer(0xc0, 1, 2, 0, 5)
         
         self.ep_out.write(binascii.unhexlify('1b510a80'))
-        sleep(2)
+        sleep(.2)
         tmp=self.ep_in.read(self.ep_in.wMaxPacketSize)
             
 
-        tmp=self.ep_out.write(wrap_request(b'D', 'ADF\n'))
-        sleep(2)
-        tmp=self.ep_in.read(self.ep_in.wMaxPacketSize)
-        print(binascii.hexlify(tmp))
+        # tmp=self.ep_out.write(wrap_request(b'D', 'ADF\n'))
+        # sleep(.2)
+        # tmp=self.ep_in.read(self.ep_in.wMaxPacketSize)
+        # print(binascii.hexlify(tmp))
 
         params = [
             ('R', '%d,%d' % (300, 300)),
@@ -139,42 +149,74 @@ class ScannerFinder:
             ('S', 'NORMAL_SCAN'),
         ]
         tmp=self.ep_out.write(wrap_request(b'I', params))
-        sleep(2)
+        sleep(.2)
         tmp=self.ep_in.read(self.ep_in.wMaxPacketSize)
         print(binascii.hexlify(tmp))
-        #assert tmp == b'\x80'
         
         params = [
             ('R', '%d,%d' % (300, 300)),
             ('M', 'CGRAY'),
             ('B', 50),
             ('N', 50),
-            # ('C', 'JPEG'),  # compression, 'J=MID'
-            ('C', 'NONE'),  # compression, 'J=MID'
+            ('C', 'JPEG'),  # compression format 
+            ('J', 'MID'),   # Compression level
+            #('C', 'NONE'),
             ('A', '%d,%d,%d,%d' % (0,0,2416,3437)),
             ('S', 'NORMAL_SCAN'),
             ('D', 'SIN'),
-            ('P', 0),
+            #('P', 0),
             ('E', 0),
             ('G', 0),
         ]
         self.ep_out.write(wrap_request(b'X', params))
-        sleep(2)
-        finish = False
-        while not finish:
-            tmp=self.ep_in.read(16384)
-            # if len(tmp) == 1 and tmp[0] == 0x80:
-            #     finish = True
-            sleep (.01)
-        print(binascii.hexlify(tmp))
+        sleep(.2)
+        out_buffer = b''
+        empty = 0
+        while True or empty < 50:
+            tmp=self.ep_in.read(65536)
+            if len(tmp)>=1:
+                pl_type = tmp[0]
+                logger.debug("Packet type: %x", pl_type)
+                if pl_type == 0xc6:
+                    logger.info("Stop error")
+                    empty = -1
+                    break
+                if pl_type == 0x82:
+                    logger.info("Stop packet received")
+                    empty = 0
+                    break
+
+                if (pl_type & 0x40) != 0x40:
+                    logger.info("Interrupt")
+                    empty = -2
+                    break
+                    
+                hdr = tmp[2:12]
+                fields = struct.unpack('hhhhh', hdr)
+                pl_len = fields[-1]
+                logger.debug("Header: %s, payload len: %d", 
+                    binascii.hexlify(hdr), pl_len)
+                
+                out_buffer+=tmp[12:]
+                empty=0
+            else:
+                empty+=1
+            sleep (.2)
+
+        #print(binascii.hexlify(out_buffer))
 
         # End use
         tmp=self.dev.ctrl_transfer(0xc0, 2, 2, 0, 5)
+        usb.util.dispose_resources(self.dev)
 
         #assert tmp == b'\x80'
+        if empty == 0:
+            output_file = "scan.jpg"
+            with open(output_file, 'wb') as local_file:
+                local_file.write(out_buffer)
+        else:
+            raise Exception("Error while scanning")
 
-        usb.util.dispose_resources(self.dev)
-        
 def find_scanner():
     f = ScannerFinder()
     return f.query()
